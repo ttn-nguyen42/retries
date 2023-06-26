@@ -23,38 +23,12 @@ func Do(task BreakableTask, opts ...Option) error {
 	}
 	var trials uint = 0
 	timer := time.NewTimer(0)
-	// try until succeed
-	if c.attempts <= 0 {
-		for {
-			err := task()
-			if err == nil {
-				return nil
-			}
-			if !c.retryIf(err) {
-				return err
-			}
-			trials += 1
-			d := c.delayType(trials, err, &c)
-			c.onRetry(trials, d, err)
-			timer.Reset(d)
-			select {
-			case <-timer.C:
-			case <-c.ctx.Done():
-				timer.Stop()
-				return c.ctx.Err()
-			}
-		}
-	}
-	for {
-		if (c.attempts - 1) == trials {
-			return ErrFinsihed
-		}
-		err := task()
+	doRetry := func(err error) (bool, error) {
 		if err == nil {
-			return nil
+			return true, nil
 		}
 		if !c.retryIf(err) {
-			return err
+			return true, err
 		}
 		trials += 1
 		d := c.delayType(trials, err, &c)
@@ -64,6 +38,26 @@ func Do(task BreakableTask, opts ...Option) error {
 		case <-timer.C:
 		case <-c.ctx.Done():
 			timer.Stop()
+			return true, c.ctx.Err()
+		}
+		return false, nil
+	}
+	// try until succeed
+	if c.attempts <= 0 {
+		for {
+			shouldStop, err := doRetry(task())
+			if shouldStop {
+				return err
+			}
+		}
+	}
+	for {
+		if (c.attempts - 1) == trials {
+			return ErrFinsihed
+		}
+		shouldStop, err := doRetry(task())
+		if shouldStop {
+			return err
 		}
 	}
 }
